@@ -1,0 +1,8 @@
+[project]
+name = "openflow"
+version = "0.1.0"
+description = "Agent SOP"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+]
