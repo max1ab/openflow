@@ -13,5 +13,9 @@ class BaseProviderAdapter(ABC):
         self.params = params
 
     @abstractmethod
-    async def stream(self, prompt: str, *, system: str | None = None) -> AsyncIterator[AgentEvent]:
-        """Stream normalized events from provider output."""
+    async def start(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """Start a new conversation and stream events."""
+
+    @abstractmethod
+    async def replay(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        """Continue an existing conversation and stream events."""

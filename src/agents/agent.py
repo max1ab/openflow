@@ -18,6 +18,7 @@ class Agent:
         *,
         workdir: str | None = None,
         role: str | None = None,
+        system: str | None = None,
         output_schema: OutputSchema | None = None,
         mcp: list[str] | None = None,
         env: dict[str, str] | None = None,
@@ -29,6 +30,7 @@ class Agent:
             provider=provider,
             workdir=workdir,
             role=role,
+            system=system,
             output_schema=output_schema,
             mcp=mcp or [],
             env=env or {},
@@ -38,6 +40,7 @@ class Agent:
         )
         self._validate_params()
         self._adapter: BaseProviderAdapter = self._build_adapter()
+        self._started = False
 
     def _validate_params(self) -> None:
         """Validate constructor parameters for the current MVP skeleton."""
@@ -53,9 +56,16 @@ class Agent:
             return GeminiCliAdapter(self.params)
         raise AgentConfigError(f"Unsupported provider: {self.params.provider}")
 
-    async def stream(self, prompt: str, *, system: str | None = None) -> AsyncIterator[AgentEvent]:
+    async def stream(self, prompt: str) -> AsyncIterator[AgentEvent]:
         """Stream normalized events from underlying provider adapter."""
         if not prompt.strip():
             raise AgentConfigError("prompt must not be empty.")
-        async for event in self._adapter.stream(prompt, system=system):
+        method = self._adapter.start if not self._started else self._adapter.replay
+        self._started = True
+        async for event in method(prompt):
             yield event
+
+    def reset(self) -> None:
+        self._started = False
+
+

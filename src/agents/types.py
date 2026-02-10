@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict
 
 ProviderName = Literal["codex", "gemini-cli"]
 AgentResultStatus = Literal["success", "failure", "error"]
-AgentEventType = Literal["done", "token", "request", "item"]
+AgentEventType = Literal["done", "token", "request", "message"]
 OutputSchema = dict[str, Any]
 
 
@@ -15,6 +15,7 @@ class AgentParams:
     provider: ProviderName
     workdir: str | None = None
     role: str | None = None
+    system: str | None = None
     output_schema: OutputSchema | None = None
     mcp: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
@@ -48,10 +49,10 @@ class RequestEvent(TypedDict):
     request: dict[str, Any]
 
 
-class ItemEvent(TypedDict):
-    event_type: Literal["item"]
+class MessageEvent(TypedDict):
+    event_type: Literal["message"]
     provider: ProviderName
-    item: dict[str, Any]
+    message: dict[str, Any]
 
 
-AgentEvent = DoneEvent | TokenEvent | RequestEvent | ItemEvent
+AgentEvent = DoneEvent | TokenEvent | RequestEvent | MessageEvent
