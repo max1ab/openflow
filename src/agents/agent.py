@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 from .base import BaseProviderAdapter
 from .errors import AgentConfigError
 from .providers.codex_adapter import CodexAdapter
-from .providers.gemini_cli_adapter import GeminiCliAdapter
+from .providers.gemini_adapter import GeminiCliAdapter
 from .types import AgentEvent, AgentParams, AgentResult, OutputSchema, ProviderName
 
 EventCallback = Callable[[AgentEvent], None | Awaitable[None]]
