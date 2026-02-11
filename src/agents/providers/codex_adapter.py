@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base import BaseProviderAdapter
-from ..types import AgentEvent, AgentParams, AgentResult
+from ..types import AgentEvent, AgentParams, AgentResult, OutputSchema
 
 
 class CodexAdapter(BaseProviderAdapter):
@@ -18,12 +18,12 @@ class CodexAdapter(BaseProviderAdapter):
         super().__init__(params)
         self._session_id: str | None = None
 
-    async def start(self, prompt: str) -> AsyncIterator[AgentEvent]:
+    async def start(self, prompt: str, output_schema: OutputSchema | None = None) -> AsyncIterator[AgentEvent]:
         self._session_id = None
         first_event = True
         async for event in self._run_exec(
             command=self._build_start_command(prompt=prompt),
-            allow_output_schema=True,
+            output_schema=output_schema,
         ):
             if first_event:
                 first_event = False
@@ -32,18 +32,18 @@ class CodexAdapter(BaseProviderAdapter):
                     self._session_id = thread_id
             yield event
 
-    async def replay(self, prompt: str) -> AsyncIterator[AgentEvent]:
+    async def replay(self, prompt: str, output_schema: OutputSchema | None = None) -> AsyncIterator[AgentEvent]:
         if not self._session_id:
             result = AgentResult(
                 status="error",
-                error_message="replay called before start: missing codex session id",
+                error="replay called before start: missing codex session id",
             )
             yield {"event_type": "done", "provider": "codex", "result": result}
             return
 
         async for event in self._run_exec(
             command=self._build_replay_command(prompt=prompt, session_id=self._session_id),
-            allow_output_schema=False,
+            output_schema=output_schema,
         ):
             yield event
 
@@ -51,7 +51,7 @@ class CodexAdapter(BaseProviderAdapter):
         self,
         *,
         command: list[str],
-        allow_output_schema: bool,
+        output_schema: OutputSchema | None,
     ) -> AsyncIterator[AgentEvent]:
         schema_path: str | None = None
         output_path: str | None = None
@@ -60,10 +60,12 @@ class CodexAdapter(BaseProviderAdapter):
         saw_done = False
 
         with tempfile.TemporaryDirectory(prefix="openflow-codex-") as tmp_dir:
-            if allow_output_schema and self.params.output_schema is not None:
+            effective_output_schema = output_schema if output_schema is not None else self.params.default_output_schema
+            use_output_schema = effective_output_schema is not None
+            if use_output_schema:
                 schema_path = str(Path(tmp_dir) / "output_schema.json")
                 Path(schema_path).write_text(
-                    json.dumps(self.params.output_schema, ensure_ascii=True, indent=2),
+                    json.dumps(effective_output_schema, ensure_ascii=True, indent=2),
                     encoding="utf-8",
                 )
                 output_path = str(Path(tmp_dir) / "final_output.json")
@@ -80,7 +82,7 @@ class CodexAdapter(BaseProviderAdapter):
                     stderr=asyncio.subprocess.PIPE,
                 )
             except Exception as exc:
-                result = AgentResult(status="error", error_message=f"failed to start codex: {exc}")
+                result = AgentResult(status="error", error=f"failed to start codex: {exc}")
                 yield {"event_type": "done", "provider": "codex", "result": result}
                 return
 
@@ -127,12 +129,15 @@ class CodexAdapter(BaseProviderAdapter):
 
             if not saw_done:
                 if return_code == 0:
-                    parsed_output = self._parse_final_output(final_text)
-                    result = AgentResult(status="success", output=parsed_output)
+                    if use_output_schema:
+                        parsed_output = self._parse_final_output(final_text)
+                        result = AgentResult(status="success", data=parsed_output)
+                    else:
+                        result = AgentResult(status="success", message=final_text or "")
                 elif final_error:
-                    result = AgentResult(status="error", error_message=final_error)
+                    result = AgentResult(status="error", error=final_error)
                 else:
-                    result = AgentResult(status="failure", error_message=f"codex exited with code {return_code}")
+                    result = AgentResult(status="failure", message=f"codex exited with code {return_code}")
                 yield {"event_type": "done", "provider": "codex", "result": result}
 
     def _build_start_command(self, *, prompt: str) -> list[str]:
@@ -219,13 +224,13 @@ class CodexAdapter(BaseProviderAdapter):
 
         if event_type == "turn.failed":
             message = payload.get("error") or payload.get("message") or "codex turn failed"
-            result = AgentResult(status="failure", error_message=str(message))
+            result = AgentResult(status="failure", message=str(message))
             events.append({"event_type": "done", "provider": "codex", "result": result})
             return events
 
         if event_type == "error":
             message = payload.get("message") or "codex error"
-            result = AgentResult(status="error", error_message=str(message))
+            result = AgentResult(status="error", error=str(message))
             events.append({"event_type": "done", "provider": "codex", "result": result})
             return events
 

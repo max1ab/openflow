@@ -16,7 +16,7 @@ class AgentParams:
     workdir: str | None = None
     role: str | None = None
     system: str | None = None
-    output_schema: OutputSchema | None = None
+    default_output_schema: OutputSchema | None = None
     mcp: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     model: str | None = None
@@ -27,8 +27,9 @@ class AgentParams:
 @dataclass(slots=True)
 class AgentResult:
     status: AgentResultStatus
-    output: OutputSchema | None = None
-    error_message: str | None = None
+    data: OutputSchema | None = None
+    message: str | None = None
+    error: str | None = None
 
 
 class DoneEvent(TypedDict):
