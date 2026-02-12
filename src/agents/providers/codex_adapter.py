@@ -11,6 +11,7 @@ from typing import Any
 
 from ..base import BaseProviderAdapter
 from ..types import AgentEvent, AgentParams, AgentResult, OutputSchema
+from .output_schema_formatter import normalize_output_schema
 
 
 class CodexAdapter(BaseProviderAdapter):
@@ -64,8 +65,9 @@ class CodexAdapter(BaseProviderAdapter):
             use_output_schema = effective_output_schema is not None
             if use_output_schema:
                 schema_path = str(Path(tmp_dir) / "output_schema.json")
+                normalized_output_schema = normalize_output_schema(effective_output_schema)
                 Path(schema_path).write_text(
-                    json.dumps(effective_output_schema, ensure_ascii=True, indent=2),
+                    json.dumps(normalized_output_schema, ensure_ascii=True, indent=2),
                     encoding="utf-8",
                 )
                 output_path = str(Path(tmp_dir) / "final_output.json")
