@@ -42,9 +42,13 @@ class CodexAdapter(BaseProviderAdapter):
             yield {"event_type": "done", "provider": "codex", "result": result}
             return
 
+        effective_output_schema = output_schema if output_schema is not None else self.params.default_output_schema
+        replay_prompt = self._append_output_schema_prompt(prompt=prompt, output_schema=effective_output_schema)
+
         async for event in self._run_exec(
-            command=self._build_replay_command(prompt=prompt, session_id=self._session_id),
+            command=self._build_replay_command(prompt=replay_prompt, session_id=self._session_id),
             output_schema=output_schema,
+            use_cli_output_schema=False,
         ):
             yield event
 
@@ -53,6 +57,7 @@ class CodexAdapter(BaseProviderAdapter):
         *,
         command: list[str],
         output_schema: OutputSchema | None,
+        use_cli_output_schema: bool = True,
     ) -> AsyncIterator[AgentEvent]:
         schema_path: str | None = None
         output_path: str | None = None
@@ -63,7 +68,7 @@ class CodexAdapter(BaseProviderAdapter):
         with tempfile.TemporaryDirectory(prefix="openflow-codex-") as tmp_dir:
             effective_output_schema = output_schema if output_schema is not None else self.params.default_output_schema
             use_output_schema = effective_output_schema is not None
-            if use_output_schema:
+            if use_output_schema and use_cli_output_schema:
                 schema_path = str(Path(tmp_dir) / "output_schema.json")
                 normalized_output_schema = normalize_output_schema(effective_output_schema)
                 Path(schema_path).write_text(
@@ -114,8 +119,10 @@ class CodexAdapter(BaseProviderAdapter):
                 if event["event_type"] == "message":
                     message = event.get("message", {})
                     if isinstance(message, dict):
+                        message_type = message.get("type")
                         maybe_text = message.get("text")
-                        if isinstance(maybe_text, str):
+                        # Use the latest agent_message text as the final assistant output.
+                        if message_type == "agent_message" and isinstance(maybe_text, str):
                             final_text = maybe_text
                 yield event
 
@@ -141,6 +148,21 @@ class CodexAdapter(BaseProviderAdapter):
                 else:
                     result = AgentResult(status="failure", message=f"codex exited with code {return_code}")
                 yield {"event_type": "done", "provider": "codex", "result": result}
+
+    def _append_output_schema_prompt(self, *, prompt: str, output_schema: OutputSchema | None) -> str:
+        if output_schema is None:
+            return prompt
+
+        normalized_output_schema = normalize_output_schema(output_schema)
+        schema_text = json.dumps(normalized_output_schema, ensure_ascii=True, indent=2)
+        return (
+            f"{prompt}\n\n"
+            "Output requirements:\n"
+            "- Return only one JSON object.\n"
+            "- The JSON must strictly match this schema.\n"
+            "- Do not add explanations, markdown, or code fences.\n"
+            f"{schema_text}"
+        )
 
     def _build_start_command(self, *, prompt: str) -> list[str]:
         command: list[str] = ["codex", "exec", "--json"]
