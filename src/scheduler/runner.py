@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     scheduler = BlockingScheduler(timezone=config.timezone_info())
+    failure_counts: dict[str, int] = {}
     enabled_jobs = [job for job in config.jobs if job.enabled]
     if not enabled_jobs:
         LOGGER.warning("no enabled jobs found in config, scheduler will idle")
@@ -56,7 +58,7 @@ def main() -> None:
             trigger=trigger,
             id=job.id,
             replace_existing=True,
-            kwargs={"job": job, "config_dir": config_dir},
+            kwargs={"job": job, "config_dir": config_dir, "scheduler": scheduler, "failure_counts": failure_counts},
             max_instances=1,
             coalesce=True,
             misfire_grace_time=60,
@@ -89,30 +91,105 @@ def build_trigger(job: JobConfig, *, timezone: Any):
     return DateTrigger(run_date=run_at, timezone=timezone)
 
 
-def run_job(*, job: JobConfig, config_dir: Path) -> None:
+def run_job(
+    *,
+    job: JobConfig,
+    config_dir: Path,
+    scheduler: BlockingScheduler,
+    failure_counts: dict[str, int],
+) -> None:
     LOGGER.info("job started id=%s", job.id)
-    try:
-        result = run_python_script(job, config_dir=config_dir)
-    except Exception:
-        LOGGER.exception("job crashed id=%s", job.id)
-        return
+    last_error: str | None = None
+    attempts = job.retry + 1
 
-    if result.ok:
-        LOGGER.info("job succeeded id=%s duration=%.2fs", job.id, result.duration_s)
-    elif result.timed_out:
-        LOGGER.error("job timeout id=%s duration=%.2fs", job.id, result.duration_s)
-    else:
+    for attempt in range(1, attempts + 1):
+        try:
+            result = run_python_script(job, config_dir=config_dir)
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            LOGGER.exception("job crashed id=%s attempt=%d/%d", job.id, attempt, attempts)
+            if attempt < attempts:
+                LOGGER.warning(
+                    "job retry scheduled id=%s next_attempt=%d delay_s=%d",
+                    job.id,
+                    attempt + 1,
+                    job.retry_delay_s,
+                )
+                time.sleep(job.retry_delay_s)
+            continue
+
+        if result.ok:
+            previous = failure_counts.get(job.id, 0)
+            failure_counts[job.id] = 0
+            LOGGER.info(
+                "job succeeded id=%s duration=%.2fs attempt=%d/%d",
+                job.id,
+                result.duration_s,
+                attempt,
+                attempts,
+            )
+            if previous > 0:
+                LOGGER.info("job recovered id=%s previous_failures=%d", job.id, previous)
+            if result.stdout.strip():
+                LOGGER.info("job stdout id=%s\n%s", job.id, result.stdout.rstrip())
+            if result.stderr.strip():
+                LOGGER.warning("job stderr id=%s\n%s", job.id, result.stderr.rstrip())
+            return
+
+        if result.timed_out:
+            last_error = f"timeout after {result.duration_s:.2f}s"
+            LOGGER.error(
+                "job timeout id=%s duration=%.2fs attempt=%d/%d",
+                job.id,
+                result.duration_s,
+                attempt,
+                attempts,
+            )
+        else:
+            last_error = f"exit code {result.return_code}"
+            LOGGER.error(
+                "job failed id=%s code=%s duration=%.2fs attempt=%d/%d",
+                job.id,
+                result.return_code,
+                result.duration_s,
+                attempt,
+                attempts,
+            )
+        if result.stdout.strip():
+            LOGGER.info("job stdout id=%s\n%s", job.id, result.stdout.rstrip())
+        if result.stderr.strip():
+            LOGGER.warning("job stderr id=%s\n%s", job.id, result.stderr.rstrip())
+
+        if attempt < attempts:
+            LOGGER.warning(
+                "job retry scheduled id=%s next_attempt=%d delay_s=%d",
+                job.id,
+                attempt + 1,
+                job.retry_delay_s,
+            )
+            time.sleep(job.retry_delay_s)
+
+    consecutive_failures = failure_counts.get(job.id, 0) + 1
+    failure_counts[job.id] = consecutive_failures
+    LOGGER.error(
+        "job run exhausted id=%s consecutive_failures=%d reason=%s",
+        job.id,
+        consecutive_failures,
+        last_error or "unknown",
+    )
+
+    if job.disable_on_failure and job.max_failures is not None and consecutive_failures >= job.max_failures:
+        try:
+            scheduler.pause_job(job.id)
+        except Exception:
+            LOGGER.exception("failed to pause job after max failures id=%s", job.id)
+            return
         LOGGER.error(
-            "job failed id=%s code=%s duration=%.2fs",
+            "job paused id=%s max_failures=%d consecutive_failures=%d",
             job.id,
-            result.return_code,
-            result.duration_s,
+            job.max_failures,
+            consecutive_failures,
         )
-
-    if result.stdout.strip():
-        LOGGER.info("job stdout id=%s\n%s", job.id, result.stdout.rstrip())
-    if result.stderr.strip():
-        LOGGER.warning("job stderr id=%s\n%s", job.id, result.stderr.rstrip())
 
 
 if __name__ == "__main__":

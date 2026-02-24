@@ -34,6 +34,10 @@ class JobConfig:
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     timeout_s: int | None = None
+    retry: int = 1
+    retry_delay_s: int = 30
+    max_failures: int | None = 1
+    disable_on_failure: bool = True
 
 
 @dataclass(slots=True)
@@ -113,6 +117,24 @@ def _parse_job(value: Any) -> JobConfig:
     if timeout_s is not None and (not isinstance(timeout_s, int) or timeout_s <= 0):
         raise SchedulerConfigError(f"job.timeout_s must be positive int when provided (job={job_id})")
 
+    retry = value.get("retry", 1)
+    if not isinstance(retry, int) or retry < 0:
+        raise SchedulerConfigError(f"job.retry must be a non-negative int (job={job_id})")
+
+    retry_delay_s = value.get("retry_delay_s", 30)
+    if not isinstance(retry_delay_s, int) or retry_delay_s <= 0:
+        raise SchedulerConfigError(f"job.retry_delay_s must be a positive int (job={job_id})")
+    if retry > 0 and retry_delay_s <= 0:
+        raise SchedulerConfigError(f"job.retry_delay_s must be > 0 when retry > 0 (job={job_id})")
+
+    max_failures = value.get("max_failures", 1)
+    if max_failures is not None and (not isinstance(max_failures, int) or max_failures <= 0):
+        raise SchedulerConfigError(f"job.max_failures must be a positive int when provided (job={job_id})")
+
+    disable_on_failure = value.get("disable_on_failure", True)
+    if not isinstance(disable_on_failure, bool):
+        raise SchedulerConfigError(f"job.disable_on_failure must be bool (job={job_id})")
+
     env = value.get("env", {})
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         raise SchedulerConfigError(f"job.env must be a string map (job={job_id})")
@@ -127,6 +149,10 @@ def _parse_job(value: Any) -> JobConfig:
         cwd=cwd.strip() if isinstance(cwd, str) else None,
         env=env,
         timeout_s=timeout_s,
+        retry=retry,
+        retry_delay_s=retry_delay_s,
+        max_failures=max_failures,
+        disable_on_failure=disable_on_failure,
     )
 
 
