@@ -33,6 +33,12 @@ Configuration structure:
   - `retry_delay_s`: delay between retries in seconds (optional, default: `30`)
   - `max_failures`: max consecutive failed runs before pause (optional, default: `1`)
   - `disable_on_failure`: auto-pause job after reaching `max_failures` (optional, default: `true`)
+  - `log_to_file`: write each attempt output to log file (optional, default: `true`)
+  - `log_dir`: log directory (optional, default: `logs/scheduler`, relative to config directory)
+  - `log_file`: log file name (optional, default: `<job_id>.log`)
+  - `log_append`: append to existing log file (optional, default: `true`)
+  - `log_max_bytes`: max size in bytes before rotation (optional, default: `10485760`)
+  - `log_backup_count`: number of rotated backups to keep (optional, default: `5`)
 
 #### 3) Start the scheduler
 
@@ -52,4 +58,9 @@ After startup, the scheduler keeps running and triggers jobs using `cron / inter
   - Default behavior: retry once, then pause the job immediately if it still fails.
   - If `disable_on_failure=true` and failures reach `max_failures`, the job is automatically paused.
   - Consecutive failure state is in memory only and resets after scheduler restart.
+- Script output notes:
+  - If `log_to_file=true`, `stdout` and `stderr` are written to file only (no terminal output).
+  - If `log_to_file=false`, `stdout` and `stderr` are printed to console.
+  - Each attempt is also written to the job log file with timestamp/attempt/status metadata.
+  - Log files use size-based rotation (`log_max_bytes` + `log_backup_count`).
 

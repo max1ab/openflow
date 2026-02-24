@@ -14,6 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import JobConfig, SchedulerConfigError, load_scheduler_config
 from .executor import run_python_script
+from .job_logging import write_attempt_log
 
 LOGGER = logging.getLogger("openflow.scheduler")
 
@@ -108,6 +109,19 @@ def run_job(
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             LOGGER.exception("job crashed id=%s attempt=%d/%d", job.id, attempt, attempts)
+            try:
+                write_attempt_log(
+                    job=job,
+                    config_dir=config_dir,
+                    attempt=attempt,
+                    attempts=attempts,
+                    status="crashed",
+                    duration_s=None,
+                    return_code=None,
+                    error_text=last_error,
+                )
+            except Exception:
+                LOGGER.exception("failed to write job log file id=%s", job.id)
             if attempt < attempts:
                 LOGGER.warning(
                     "job retry scheduled id=%s next_attempt=%d delay_s=%d",
@@ -128,12 +142,23 @@ def run_job(
                 attempt,
                 attempts,
             )
+            try:
+                write_attempt_log(
+                    job=job,
+                    config_dir=config_dir,
+                    attempt=attempt,
+                    attempts=attempts,
+                    status="success",
+                    duration_s=result.duration_s,
+                    return_code=result.return_code,
+                    stdout_text=result.stdout,
+                    stderr_text=result.stderr,
+                )
+            except Exception:
+                LOGGER.exception("failed to write job log file id=%s", job.id)
             if previous > 0:
                 LOGGER.info("job recovered id=%s previous_failures=%d", job.id, previous)
-            if result.stdout.strip():
-                LOGGER.info("job stdout id=%s\n%s", job.id, result.stdout.rstrip())
-            if result.stderr.strip():
-                LOGGER.warning("job stderr id=%s\n%s", job.id, result.stderr.rstrip())
+            _log_job_output_to_console(job=job, stdout_text=result.stdout, stderr_text=result.stderr)
             return
 
         if result.timed_out:
@@ -155,10 +180,21 @@ def run_job(
                 attempt,
                 attempts,
             )
-        if result.stdout.strip():
-            LOGGER.info("job stdout id=%s\n%s", job.id, result.stdout.rstrip())
-        if result.stderr.strip():
-            LOGGER.warning("job stderr id=%s\n%s", job.id, result.stderr.rstrip())
+        try:
+            write_attempt_log(
+                job=job,
+                config_dir=config_dir,
+                attempt=attempt,
+                attempts=attempts,
+                status="timeout" if result.timed_out else "failed",
+                duration_s=result.duration_s,
+                return_code=result.return_code,
+                stdout_text=result.stdout,
+                stderr_text=result.stderr,
+            )
+        except Exception:
+            LOGGER.exception("failed to write job log file id=%s", job.id)
+        _log_job_output_to_console(job=job, stdout_text=result.stdout, stderr_text=result.stderr)
 
         if attempt < attempts:
             LOGGER.warning(
@@ -190,6 +226,15 @@ def run_job(
             job.max_failures,
             consecutive_failures,
         )
+
+
+def _log_job_output_to_console(*, job: JobConfig, stdout_text: str, stderr_text: str) -> None:
+    if job.log_to_file:
+        return
+    if stdout_text.strip():
+        LOGGER.info("job stdout id=%s\n%s", job.id, stdout_text.rstrip())
+    if stderr_text.strip():
+        LOGGER.warning("job stderr id=%s\n%s", job.id, stderr_text.rstrip())
 
 
 if __name__ == "__main__":

@@ -38,6 +38,12 @@ class JobConfig:
     retry_delay_s: int = 30
     max_failures: int | None = 1
     disable_on_failure: bool = True
+    log_to_file: bool = True
+    log_dir: str = "logs/scheduler"
+    log_file: str | None = None
+    log_append: bool = True
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
 
 
 @dataclass(slots=True)
@@ -135,6 +141,30 @@ def _parse_job(value: Any) -> JobConfig:
     if not isinstance(disable_on_failure, bool):
         raise SchedulerConfigError(f"job.disable_on_failure must be bool (job={job_id})")
 
+    log_to_file = value.get("log_to_file", True)
+    if not isinstance(log_to_file, bool):
+        raise SchedulerConfigError(f"job.log_to_file must be bool (job={job_id})")
+
+    log_dir = value.get("log_dir", "logs/scheduler")
+    if not isinstance(log_dir, str) or not log_dir.strip():
+        raise SchedulerConfigError(f"job.log_dir must be a non-empty string (job={job_id})")
+
+    log_file = value.get("log_file")
+    if log_file is not None and (not isinstance(log_file, str) or not log_file.strip()):
+        raise SchedulerConfigError(f"job.log_file must be a non-empty string when provided (job={job_id})")
+
+    log_append = value.get("log_append", True)
+    if not isinstance(log_append, bool):
+        raise SchedulerConfigError(f"job.log_append must be bool (job={job_id})")
+
+    log_max_bytes = value.get("log_max_bytes", 10 * 1024 * 1024)
+    if not isinstance(log_max_bytes, int) or log_max_bytes <= 0:
+        raise SchedulerConfigError(f"job.log_max_bytes must be a positive int (job={job_id})")
+
+    log_backup_count = value.get("log_backup_count", 5)
+    if not isinstance(log_backup_count, int) or log_backup_count < 0:
+        raise SchedulerConfigError(f"job.log_backup_count must be a non-negative int (job={job_id})")
+
     env = value.get("env", {})
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         raise SchedulerConfigError(f"job.env must be a string map (job={job_id})")
@@ -153,6 +183,12 @@ def _parse_job(value: Any) -> JobConfig:
         retry_delay_s=retry_delay_s,
         max_failures=max_failures,
         disable_on_failure=disable_on_failure,
+        log_to_file=log_to_file,
+        log_dir=log_dir.strip(),
+        log_file=log_file.strip() if isinstance(log_file, str) else None,
+        log_append=log_append,
+        log_max_bytes=log_max_bytes,
+        log_backup_count=log_backup_count,
     )
 
 
