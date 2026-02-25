@@ -1,20 +1,77 @@
 ## Openflow
 
-### JSON Scheduler
+Openflow currently contains three parts:
 
-This project includes a basic scheduler that can trigger Python scripts based on a JSON configuration.
+- `Agent System`: unified wrapper for provider CLIs (`codex`, `gemini-cli`)
+- `Interface`: external messaging integration (current implementation: Feishu)
+- `JSON Scheduler`: time-based task runner that executes Python scripts
 
-#### 1) Install dependencies
+## Install
 
 ```bash
 uv sync
 ```
 
-#### 2) Prepare the config file
+## 1) Agent System
 
-See `examples/scheduler_jobs.json`.
+Core module: `src/agents`.
 
-Configuration structure:
+### What it provides
+
+- Unified `Agent` API for different providers
+- Async `stream()` and `run()` execution modes
+- Structured output support via JSON schema (`default_output_schema` or per-run `output_schema`)
+- Event callback hook (`on_event`) for token/message/request events
+
+### Key types
+
+- Provider: `codex` / `gemini-cli`
+- Event types: `done` / `token` / `request` / `message`
+- Result status: `success` / `failure` / `error`
+
+### Minimal example
+
+```python
+import asyncio
+from src.agents.agent import Agent
+
+async def main():
+    agent = Agent(provider="codex", role="assistant")
+    result = await agent.run("Give me a short summary.")
+    print(result.status, result.message, result.data)
+
+asyncio.run(main())
+```
+
+## 2) Interface
+
+Core module: `src/interface`.
+
+Current interface implementation is Feishu:
+
+- `FeishuConfig`: loads credentials from env
+- `FeishuInterface`: receive messages from websocket events and send/reply text messages
+- `InboundMessage`: normalized inbound message structure
+
+### Required env vars (Feishu)
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+
+Optional:
+
+- `FEISHU_VERIFICATION_TOKEN`
+- `FEISHU_ENCRYPT_KEY`
+
+## 3) JSON Scheduler
+
+Core module: `src/scheduler`.
+
+The scheduler reads a JSON config and triggers Python scripts by time rules.
+
+### Config file
+
+Default example: `examples/scheduler_jobs.json`.
 
 - `timezone`: scheduler timezone (for example, `Asia/Shanghai`)
 - `jobs`: list of jobs
@@ -29,38 +86,27 @@ Configuration structure:
   - `cwd`: working directory for the script (optional, relative to config directory)
   - `env`: per-job environment variables (optional)
   - `timeout_s`: timeout in seconds (optional)
-  - `retry`: retry count after a failed run in the same trigger execution (optional, default: `1`)
-  - `retry_delay_s`: delay between retries in seconds (optional, default: `30`)
-  - `max_failures`: max consecutive failed runs before pause (optional, default: `1`)
-  - `disable_on_failure`: auto-pause job after reaching `max_failures` (optional, default: `true`)
-  - `log_to_file`: write each attempt output to log file (optional, default: `true`)
-  - `log_dir`: log directory (optional, default: `logs/scheduler`, relative to config directory)
-  - `log_file`: log file name (optional, default: `<job_id>.log`)
-  - `log_append`: append to existing log file (optional, default: `true`)
-  - `log_max_bytes`: max size in bytes before rotation (optional, default: `10485760`)
-  - `log_backup_count`: number of rotated backups to keep (optional, default: `5`)
+  - `retry`: retry count after a failed run in the same trigger execution (default: `1`)
+  - `retry_delay_s`: delay between retries in seconds (default: `30`)
+  - `max_failures`: max consecutive failed runs before pause (default: `1`)
+  - `disable_on_failure`: auto-pause job after reaching `max_failures` (default: `true`)
+  - `log_to_file`: write each attempt output to file (default: `true`)
+  - `log_dir`: log directory (default: `logs/scheduler`, relative to config directory)
+  - `log_file`: log file name (default: `<job_id>.log`)
+  - `log_append`: append mode for log file (default: `true`)
+  - `log_max_bytes`: max size before rotation (default: `10485760`)
+  - `log_backup_count`: number of rotated backups to keep (default: `5`)
 
-#### 3) Start the scheduler
+### Start scheduler
 
 ```bash
 uv run python -m src.scheduler.runner --config examples/scheduler_jobs.json
 ```
 
-After startup, the scheduler keeps running and triggers jobs using `cron / interval / once`.
+### Runtime behavior
 
-#### 4) Logging and shutdown
-
-- Each run logs start/success/failure, duration, and stdout/stderr.
-- Press `Ctrl+C` for graceful shutdown.
-- Failure policy notes:
-  - `retry` retries immediately within the same trigger execution.
-  - Consecutive failure count is tracked per trigger execution (not per retry attempt).
-  - Default behavior: retry once, then pause the job immediately if it still fails.
-  - If `disable_on_failure=true` and failures reach `max_failures`, the job is automatically paused.
-  - Consecutive failure state is in memory only and resets after scheduler restart.
-- Script output notes:
-  - If `log_to_file=true`, `stdout` and `stderr` are written to file only (no terminal output).
-  - If `log_to_file=false`, `stdout` and `stderr` are printed to console.
-  - Each attempt is also written to the job log file with timestamp/attempt/status metadata.
-  - Log files use size-based rotation (`log_max_bytes` + `log_backup_count`).
+- Supports `cron / interval / once` triggers
+- Default failure policy: retry once; if still failed, pause job immediately
+- `log_to_file=true`: script `stdout/stderr` only goes to file
+- `log_to_file=false`: script `stdout/stderr` is printed to terminal
 
