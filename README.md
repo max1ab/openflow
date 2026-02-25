@@ -110,3 +110,8 @@ uv run python -m src.scheduler.runner --config examples/scheduler_jobs.json
 - `log_to_file=true`: script `stdout/stderr` only goes to file
 - `log_to_file=false`: script `stdout/stderr` is printed to terminal
 
+## License
+
+This project is licensed under the Apache License 2.0.
+You can copy, modify, and use it commercially, but you must keep the original license and attribution notices.
+
